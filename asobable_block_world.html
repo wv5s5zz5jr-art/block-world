@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>あそべるブロックワールド</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#78c8ee;touch-action:none}
+canvas{display:block;width:100%;height:100%}
+#ui{position:fixed;inset:0;pointer-events:none;font-family:Arial,sans-serif;color:white;text-shadow:2px 2px 3px #333}
+#title{position:absolute;top:10px;left:12px;font-weight:bold;font-size:18px}
+#count{position:absolute;top:10px;right:12px;background:#0008;padding:7px 10px;border-radius:10px}
+#cross{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:25px}
+.ctrl{pointer-events:auto;position:absolute;border:2px solid #fff8;background:#0007;color:white;font-weight:bold;border-radius:16px}
+#stick{left:18px;bottom:25px;width:125px;height:125px;border-radius:50%;background:#ffffff30}
+#dot{position:absolute;width:46px;height:46px;border-radius:50%;background:#ffffffbb;left:37px;top:37px}
+#jump{right:20px;bottom:110px;width:78px;height:58px}
+#break{right:108px;bottom:28px;width:78px;height:58px}
+#put{right:20px;bottom:28px;width:78px;height:58px}
+#help{position:absolute;bottom:5px;left:50%;transform:translateX(-50%);font-size:11px;white-space:nowrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+ <div id="title">🌳 あそべるブロックワールド</div>
+ <div id="count">🟫 土 20</div>
+ <div id="cross">＋</div>
+ <div id="help">左の丸＝移動　画面＝見る　壊す・置く＝ブロック操作</div>
+ <div id="stick" class="ctrl"><div id="dot"></div></div>
+ <button id="jump" class="ctrl">ジャンプ</button>
+ <button id="break" class="ctrl">⛏ 壊す</button>
+ <button id="put" class="ctrl">🟫 置く</button>
+</div>
+<script>
+/* 外部ライブラリなし。iPadでも単体で動く超軽量3D風ブロックゲーム */
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let W=innerWidth,H=innerHeight,D=devicePixelRatio||1;
+function resize(){W=innerWidth;H=innerHeight;cv.width=W*D;cv.height=H*D;ctx.setTransform(D,0,0,D,0,0)}
+addEventListener('resize',resize);resize();
+
+let px=0,pz=6,py=1.65,vy=0,yaw=0,pitch=0;
+let sx=0,sy=0,joy=false,jid=null,look=false,lid=null,lx=0,ly=0;
+let dirt=20;
+const blocks=new Map();
+const K=(x,y,z)=>x+','+y+','+z;
+function add(x,y,z,t){blocks.set(K(x,y,z),{x,y,z,t})}
+function del(x,y,z){blocks.delete(K(x,y,z))}
+function has(x,y,z){return blocks.has(K(x,y,z))}
+for(let x=-16;x<=16;x++)for(let z=-16;z<=16;z++){add(x,0,z,'dirt');add(x,1,z,'grass')}
+function tree(x,z){
+ for(let y=2;y<=4;y++)add(x,y,z,'wood');
+ for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)for(let y=4;y<=5;y++)add(x+dx,y,z+dz,'leaf')
+}
+tree(-6,-4);tree(7,-4);tree(-7,7);tree(7,7);
+
+function project(x,y,z){
+ let dx=x-px,dz=z-pz;
+ let ca=Math.cos(yaw),sa=Math.sin(yaw);
+ let X=dx*ca-dz*sa,Z=dx*sa+dz*ca;
+ let cp=Math.cos(pitch),sp=Math.sin(pitch);
+ let Y=y-py;
+ let Y2=Y*cp-Z*sp, Z2=Y*sp+Z*cp;
+ if(Z2<=.15)return null;
+ const f=Math.min(W,H)*.9;
+ return {x:W/2+X*f/Z2,y:H/2-Y2*f/Z2,z:Z2};
+}
+function drawBlock(b){
+ const p=project(b.x+.5,b.y+.5,b.z+.5);if(!p||p.z>65)return;
+ const s=Math.min(90,Math.max(3,Math.min(W,H)*.82/p.z));
+ const x=p.x,y=p.y;
+ let col=b.t==='grass'?'#55a844':b.t==='wood'?'#98602f':b.t==='leaf'?'#318b43':'#8b5a35';
+ ctx.fillStyle=col;
+ ctx.fillRect(x-s/2,y-s/2,s,s);
+ ctx.strokeStyle='#0003';ctx.strokeRect(x-s/2,y-s/2,s,s);
+}
+function render(){
+ ctx.fillStyle='#78c8ee';ctx.fillRect(0,0,W,H);
+ // 太陽
+ ctx.fillStyle='#ffe77a';ctx.beginPath();ctx.arc(W-75,80,32,0,7);ctx.fill();
+ const arr=[...blocks.values()].sort((a,b)=>{
+  const da=(a.x-px)**2+(a.z-pz)**2+(a.y-py)**2;
+  const db=(b.x-px)**2+(b.z-pz)**2+(b.y-py)**2;return db-da;
+ });
+ for(const b of arr)drawBlock(b);
+}
+function move(){
+ let mx=sx,my=sy;
+ let sp=.075;
+ const ca=Math.cos(yaw),sa=Math.sin(yaw);
+ px+=(mx*ca+my*sa)*sp;
+ pz+=(-mx*sa+my*ca)*sp;
+ px=Math.max(-15,Math.min(15,px));pz=Math.max(-15,Math.min(15,pz));
+ vy-=.012;py+=vy;
+ if(py<1.65){py=1.65;vy=0}
+ render();
+ requestAnimationFrame(move);
+}
+function target(){
+ // 一番近く、画面中央方向にあるブロック
+ let best=null,score=999;
+ for(const b of blocks.values()){
+  const p=project(b.x+.5,b.y+.5,b.z+.5);if(!p||p.z>7)continue;
+  const d=Math.hypot(p.x-W/2,p.y-H/2);
+  if(d<Math.min(W,H)*.16 && p.z<score){best=b;score=p.z}
+ }
+ return best;
+}
+function update(){document.getElementById('count').textContent='🟫 土 '+dirt}
+function breakBlock(){
+ const b=target();if(!b||b.y<=1)return;
+ del(b.x,b.y,b.z);dirt++;update()
+}
+function putBlock(){
+ const b=target();if(!b||dirt<=0)return;
+ // カメラの向いている方向に1マス先へ
+ const dx=Math.sin(yaw),dz=Math.cos(yaw);
+ let x=Math.floor(b.x+0.5+Math.round(dx)),z=Math.floor(b.z+0.5+Math.round(dz)),y=b.y;
+ if(!has(x,y,z)){add(x,y,z,'dirt');dirt--;update()}
+}
+document.getElementById('break').addEventListener('pointerdown',breakBlock);
+document.getElementById('put').addEventListener('pointerdown',putBlock);
+document.getElementById('jump').addEventListener('pointerdown',()=>{if(py<=1.66){vy=.23}});
+
+const st=document.getElementById('stick'),dot=document.getElementById('dot');
+function joyAt(x,y){
+ const r=st.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
+ let dx=x-cx,dy=y-cy,l=Math.hypot(dx,dy),m=39;
+ if(l>m){dx=dx/l*m;dy=dy/l*m}
+ sx=dx/m;sy=dy/m;dot.style.transform=`translate(${dx}px,${dy}px)`
+}
+st.addEventListener('pointerdown',e=>{joy=true;jid=e.pointerId;st.setPointerCapture(jid);joyAt(e.clientX,e.clientY)});
+st.addEventListener('pointermove',e=>{if(joy&&e.pointerId===jid)joyAt(e.clientX,e.clientY)});
+function endJoy(){joy=false;sx=sy=0;dot.style.transform='translate(0,0)'}
+st.addEventListener('pointerup',endJoy);st.addEventListener('pointercancel',endJoy);
+
+cv.addEventListener('pointerdown',e=>{
+ if(e.clientY>H-155)return;
+ look=true;lid=e.pointerId;lx=e.clientX;ly=e.clientY;cv.setPointerCapture(lid)
+});
+cv.addEventListener('pointermove',e=>{
+ if(!look||e.pointerId!==lid)return;
+ yaw-=(e.clientX-lx)*.01;pitch-=(e.clientY-ly)*.007;
+ pitch=Math.max(-.8,Math.min(.8,pitch));lx=e.clientX;ly=e.clientY
+});
+cv.addEventListener('pointerup',()=>look=false);
+cv.addEventListener('pointercancel',()=>look=false);
+
+render();move();
+</script>
+</body>
+</html>
